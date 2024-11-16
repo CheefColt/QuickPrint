@@ -77,7 +77,3 @@ The purpose of this project is to solve the inefficiencies faced by printer shop
 2. Increased customer satisfaction with faster and more transparent processes.
 3. Availability of actionable business insights for shopkeepers.
 
-## Timeline
-- **Phase 1 (1 Month):** Requirements gathering and initial design.
-- **Phase 2 (2 Months):** Development of mobile and desktop applications.
-- **Phase 3 (1 Month):** Integration, testing, and deployment of MVP.
