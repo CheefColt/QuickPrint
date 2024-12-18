@@ -1,0 +1,3 @@
+PyQt6==6.5.0
+watchdog==3.0.0
+win32printing==0.1.0
