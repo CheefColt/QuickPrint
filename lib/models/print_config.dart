@@ -4,49 +4,61 @@ class PrintConfig {
   static const int MAX_COPIES = 100;
 
   final String paperSize;
-  final bool isColor;
-  final bool isDuplex;
-  final int copies;
+  bool _color;
+  bool _doubleSided;
+  int _copies;
 
-  const PrintConfig({
+  PrintConfig({
     this.paperSize = 'A4',
-    this.isColor = false,
-    this.isDuplex = false,
-    this.copies = 1,
-  });
+    bool color = false,
+    bool doubleSided = false,
+    int copies = 1,
+  })  : _color = color,
+        _doubleSided = doubleSided,
+        _copies = copies;
+
+  // Getters
+  bool get color => _color;
+  bool get doubleSided => _doubleSided;
+  int get copies => _copies;
+
+  // Setters
+  set color(bool value) => _color = value;
+  set doubleSided(bool value) => _doubleSided = value;
+  set copies(int value) => _copies = value;
 
   PrintConfig copyWith({
     String? paperSize,
-    bool? isColor,
-    bool? isDuplex,
+    bool? color,
+    bool? doubleSided,
     int? copies,
   }) {
     return PrintConfig(
       paperSize: paperSize ?? this.paperSize,
-      isColor: isColor ?? this.isColor,
-      isDuplex: isDuplex ?? this.isDuplex,
-      copies: (copies ?? this.copies).clamp(MIN_COPIES, MAX_COPIES),
+      color: color ?? this._color,
+      doubleSided: doubleSided ?? this._doubleSided,
+      copies: (copies ?? this._copies).clamp(MIN_COPIES, MAX_COPIES),
     );
   }
 
   Map<String, dynamic> toJson() => {
     'paper_size': paperSize,
-    'is_color': isColor,
-    'is_duplex': isDuplex,
-    'copies': copies,
+    'color': _color,
+    'double_sided': _doubleSided,
+    'copies': _copies,
   };
 
   factory PrintConfig.fromJson(Map<String, dynamic> json) => PrintConfig(
     paperSize: json['paper_size'] ?? 'A4',
-    isColor: json['is_color'] ?? false,
-    isDuplex: json['is_duplex'] ?? false,
+    color: json['color'] ?? false,
+    doubleSided: json['double_sided'] ?? false,
     copies: (json['copies'] ?? 1).clamp(MIN_COPIES, MAX_COPIES),
   );
 
   double calculateCost() {
     double baseCost = paperSize == 'A3' ? 0.20 : 0.10;
-    if (isColor) baseCost *= 2;
-    if (isDuplex) baseCost *= 1.5;
-    return baseCost * copies;
+    if (_color) baseCost *= 2;
+    if (_doubleSided) baseCost *= 1.5;
+    return baseCost * _copies;
   }
 }

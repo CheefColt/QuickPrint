@@ -1,98 +1,102 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import 'dart:io';
 import '../providers/order_provider.dart';
 import '../models/print_config.dart';
+import '../services/api_service.dart';
 
 class UploadScreen extends StatefulWidget {
-  const UploadScreen({Key? key}) : super(key: key);
+  const UploadScreen({super.key});
 
   @override
   State<UploadScreen> createState() => _UploadScreenState();
 }
 
 class _UploadScreenState extends State<UploadScreen> {
+  final ApiService _apiService = ApiService();
   final List<String> _filePaths = [];
-  List<PrintConfig> _printConfigs = [];
-  bool _useSameConfigForAll = true;
-  late PrintConfig _defaultConfig;
+  final List<PrintConfig> _printConfigs = [];
   bool _isLoading = false;
+  String? _error;
+  bool _useBatchConfig = false;
+  late final PrintConfig _batchConfig;
 
   @override
   void initState() {
     super.initState();
-    _defaultConfig = const PrintConfig();
+    _batchConfig = PrintConfig();
   }
 
-  void _updateConfig(int? index, {
-    String? paperSize,
-    bool? isColor,
-    bool? isDuplex,
-    int? copies,
-  }) {
-    setState(() {
-      if (index != null) {
-        _printConfigs[index] = _printConfigs[index].copyWith(
-          paperSize: paperSize,
-          isColor: isColor,
-          isDuplex: isDuplex,
-          copies: copies,
-        );
-      } else {
-        _defaultConfig = _defaultConfig.copyWith(
-          paperSize: paperSize,
-          isColor: isColor,
-          isDuplex: isDuplex,
-          copies: copies,
-        );
-        if (_useSameConfigForAll) {
-          _printConfigs = List.generate(
-            _printConfigs.length,
-            (_) => _defaultConfig,
-          );
-        }
+  Future<void> _checkConnection() async {
+    try {
+      final isConnected = await _apiService.testConnection();
+      if (!isConnected) {
+        setState(() => _error = 'Failed to connect to server');
       }
-    });
+    } catch (e) {
+      setState(() => _error = e.toString());
+    }
   }
 
   Future<void> _pickFiles() async {
     try {
-      setState(() => _isLoading = true);
-      
       final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'doc', 'docx'],
         allowMultiple: true,
-        type: FileType.any,
       );
 
       if (result != null) {
         setState(() {
-          _filePaths.addAll(result.paths.whereType<String>());
-          _printConfigs.addAll(
-            List.generate(
-              result.paths.length,
-              (_) => _defaultConfig,
-            ),
-          );
+          for (var file in result.files) {
+            if (file.path != null) {
+              _filePaths.add(file.path!);
+              // Apply batch config if enabled
+              _printConfigs.add(_useBatchConfig 
+                ? PrintConfig(
+                    color: _batchConfig.color,
+                    doubleSided: _batchConfig.doubleSided,
+                    copies: _batchConfig.copies,
+                  )
+                : PrintConfig());
+            }
+          }
         });
       }
-    } finally {
-      setState(() => _isLoading = false);
+    } catch (e) {
+      setState(() => _error = 'Error picking files: $e');
     }
   }
 
-  Future<void> _submit() async {
-    final orderProvider = context.read<OrderProvider>();
-    
+  Future<void> _submitFiles() async {
+    if (_filePaths.isEmpty) return;
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
     try {
-      setState(() => _isLoading = true);
+      final orderProvider = Provider.of<OrderProvider>(context, listen: false);
       
-      for (var i = 0; i < _filePaths.length; i++) {
-        await orderProvider.addOrder(_filePaths[i], _printConfigs[i]);
+      for (int i = 0; i < _filePaths.length; i++) {
+        final success = await orderProvider.submitOrder(_filePaths[i], _printConfigs[i]);
+        if (!success) throw Exception('Failed to submit order');
       }
-      
+
+      setState(() {
+        _filePaths.clear();
+        _printConfigs.clear();
+      });
+
       if (mounted) {
-        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Orders submitted successfully'))
+        );
       }
+    } catch (e) {
+      setState(() => _error = e.toString());
     } finally {
       setState(() => _isLoading = false);
     }
@@ -104,122 +108,297 @@ class _UploadScreenState extends State<UploadScreen> {
       appBar: AppBar(
         title: const Text('Upload Documents'),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                _buildFileList(),
-                _buildConfigSection(),
-                _buildSubmitButton(),
-              ],
-            ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _isLoading ? null : _pickFiles,
-        child: const Icon(Icons.add),
-      ),
-    );
-  }
-
-  Widget _buildFileList() {
-    return Expanded(
-      child: ListView.builder(
-        itemCount: _filePaths.length,
-        itemBuilder: (context, index) {
-          final path = _filePaths[index];
-          final fileName = path.split('\\').last;
-          
-          return ListTile(
-            title: Text(fileName),
-            subtitle: _buildConfigTile(index),
-            trailing: IconButton(
-              icon: const Icon(Icons.delete),
-              onPressed: () => setState(() {
-                _filePaths.removeAt(index);
-                _printConfigs.removeAt(index);
-              }),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildConfigTile(int index) {
-    final config = _printConfigs[index];
-    return Text(
-      '${config.paperSize} - ${config.isColor ? "Color" : "B&W"} - ${config.copies} copies',
-    );
-  }
-
-  Widget _buildConfigSection() {
-    return Card(
-      margin: const EdgeInsets.all(16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SwitchListTile(
-              title: const Text('Use same settings for all'),
-              value: _useSameConfigForAll,
-              onChanged: (value) => setState(() => _useSameConfigForAll = value),
+            if (_error != null)
+              Card(
+                color: Colors.red.shade100,
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                ),
+              ),
+
+            ElevatedButton.icon(
+              onPressed: _pickFiles,
+              icon: const Icon(Icons.add),
+              label: const Text('Add Files'),
             ),
-            const Divider(),
-            _buildConfigForm(),
+
+            const SizedBox(height: 16),
+
+            // Batch Configuration Switch
+            _buildBatchConfigSwitch(),
+
+            Expanded(
+              child: ListView.builder(
+                itemCount: _filePaths.length,
+                itemBuilder: (context, index) {
+                  return _buildFileItem(index);
+                },
+              ),
+            ),
+
+            SizedBox(
+              height: 50,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _submitFiles,
+                child: _isLoading
+                    ? const CircularProgressIndicator()
+                    : const Text('Submit Orders'),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildConfigForm() {
-    return Column(
-      children: [
-        DropdownButtonFormField<String>(
-          value: _defaultConfig.paperSize,
-          items: PrintConfig.VALID_PAPER_SIZES
-              .map((size) => DropdownMenuItem(
-                    value: size,
-                    child: Text(size),
-                  ))
-              .toList(),
-          onChanged: (value) => _updateConfig(
-            null,
-            paperSize: value,
+  void _applyBatchConfig() {
+    setState(() {
+      for (var i = 0; i < _printConfigs.length; i++) {
+        _printConfigs[i] = PrintConfig(
+          color: _batchConfig.color,
+          doubleSided: _batchConfig.doubleSided,
+          copies: _batchConfig.copies,
+        );
+      }
+    });
+  }
+
+  void _updateBatchConfig(PrintConfig newConfig) {
+    setState(() {
+      _batchConfig.color = newConfig.color;
+      _batchConfig.doubleSided = newConfig.doubleSided;
+      _batchConfig.copies = newConfig.copies;
+      
+      if (_useBatchConfig) {
+        for (int i = 0; i < _printConfigs.length; i++) {
+          _printConfigs[i] = PrintConfig(
+            color: _batchConfig.color,
+            doubleSided: _batchConfig.doubleSided,
+            copies: _batchConfig.copies,
+          );
+        }
+      }
+    });
+  }
+
+  Widget _buildBatchConfigSwitch() {
+    return Card(
+      child: Column(
+        children: [
+          SwitchListTile(
+            title: const Text('Use Same Configuration for All Files'),
+            value: _useBatchConfig,
+            onChanged: (value) {
+              setState(() {
+                _useBatchConfig = value;
+                if (value) {
+                  for (int i = 0; i < _printConfigs.length; i++) {
+                    _printConfigs[i] = PrintConfig(
+                      color: _batchConfig.color,
+                      doubleSided: _batchConfig.doubleSided,
+                      copies: _batchConfig.copies,
+                    );
+                  }
+                }
+              });
+            },
           ),
-          decoration: const InputDecoration(
-            labelText: 'Paper Size',
-          ),
-        ),
-        const SizedBox(height: 16),
-        SwitchListTile(
-          title: const Text('Color Print'),
-          value: _defaultConfig.isColor,
-          onChanged: (value) => _updateConfig(
-            null,
-            isColor: value,
-          ),
-        ),
-        SwitchListTile(
-          title: const Text('Double Sided'),
-          value: _defaultConfig.isDuplex,
-          onChanged: (value) => _updateConfig(
-            null,
-            isDuplex: value,
-          ),
-        ),
-      ],
+          if (_useBatchConfig)
+            ListTile(
+              title: Text(
+                'Batch Config: Copies: ${_batchConfig.copies}, ' +
+                'Color: ${_batchConfig.color ? "Yes" : "No"}, ' +
+                'Double Sided: ${_batchConfig.doubleSided ? "Yes" : "No"}'
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.settings),
+                onPressed: () => _showConfigDialog(
+                  config: _batchConfig,
+                  isBatch: true,
+                  onConfigChanged: _updateBatchConfig,
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
-  Widget _buildSubmitButton() {
-    final bool canSubmit = _filePaths.isNotEmpty && !_isLoading;
+  Future<void> _showConfigDialog({
+    required PrintConfig config,
+    bool isBatch = false,
+    Function(PrintConfig)? onConfigChanged,
+  }) async {
+    PrintConfig tempConfig = PrintConfig(
+      color: config.color,
+      doubleSided: config.doubleSided,
+      copies: config.copies,
+    );
+
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(isBatch ? 'Batch Configuration' : 'File Configuration'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile(
+                title: const Text('Color Print'),
+                value: tempConfig.color,
+                onChanged: (value) {
+                  setDialogState(() => tempConfig.color = value);
+                  if (onConfigChanged != null) {
+                    onConfigChanged(tempConfig);
+                  }
+                },
+              ),
+              SwitchListTile(
+                title: const Text('Double Sided'),
+                value: tempConfig.doubleSided,
+                onChanged: (value) {
+                  setDialogState(() => tempConfig.doubleSided = value);
+                  if (onConfigChanged != null) {
+                    onConfigChanged(tempConfig);
+                  }
+                },
+              ),
+              ListTile(
+                title: const Text('Copies'),
+                trailing: DropdownButton<int>(
+                  value: tempConfig.copies,
+                  items: List.generate(10, (i) => i + 1)
+                      .map((e) => DropdownMenuItem(
+                            value: e,
+                            child: Text('$e'),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setDialogState(() => tempConfig.copies = value);
+                      if (onConfigChanged != null) {
+                        onConfigChanged(tempConfig);
+                      }
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showFileConfigDialog(int index) async {
+    PrintConfig config = _printConfigs[index];
     
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: ElevatedButton(
-        onPressed: canSubmit ? _submit : null,
-        child: const Text('Submit Order'),
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder( // Use StatefulBuilder for dialog state
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Print Configuration'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile(
+                title: const Text('Color Print'),
+                value: config.color,
+                onChanged: (value) {
+                  setDialogState(() {
+                    config.color = value;
+                  });
+                  setState(() {
+                    // Create new config object to force rebuild
+                    _printConfigs[index] = PrintConfig(
+                      color: config.color,
+                      doubleSided: config.doubleSided,
+                      copies: config.copies,
+                    );
+                  });
+                },
+              ),
+              SwitchListTile(
+                title: const Text('Double Sided'),
+                value: config.doubleSided,
+                onChanged: (value) {
+                  setDialogState(() {
+                    config.doubleSided = value;
+                  });
+                  setState(() {
+                    _printConfigs[index] = PrintConfig(
+                      color: config.color,
+                      doubleSided: config.doubleSided,
+                      copies: config.copies,
+                    );
+                  });
+                },
+              ),
+              ListTile(
+                title: const Text('Copies'),
+                trailing: DropdownButton<int>(
+                  value: config.copies,
+                  items: List.generate(10, (i) => i + 1)
+                      .map((e) => DropdownMenuItem(value: e, child: Text('$e')))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setDialogState(() {
+                        config.copies = value;
+                      });
+                      setState(() {
+                        _printConfigs[index] = PrintConfig(
+                          color: config.color,
+                          doubleSided: config.doubleSided,
+                          copies: config.copies,
+                        );
+                      });
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFileItem(int index) {
+    final file = File(_filePaths[index]);
+    final config = _printConfigs[index];
+    
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.description),
+        title: Text(file.path.split('/').last),
+        subtitle: Text(
+          'Copies: ${config.copies} | ' 
+          'Color: ${config.color ? "Yes" : "No"} | '
+          'Double Sided: ${config.doubleSided ? "Yes" : "No"}'
+        ),
+        trailing: IconButton(
+          icon: const Icon(Icons.settings),
+          onPressed: () => _showFileConfigDialog(index),
+        ),
       ),
     );
   }

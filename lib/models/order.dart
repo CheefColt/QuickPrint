@@ -1,83 +1,80 @@
 import 'print_config.dart';
 
 class Order {
-  static const String STATUS_PENDING = 'pending';
-  static const String STATUS_PROCESSING = 'processing';
-  static const String STATUS_COMPLETED = 'completed';
-  static const String STATUS_FAILED = 'failed';
-
   final String id;
-  final String documentName;
+  final String filename;
   final PrintConfig config;
   final String status;
-  final DateTime createdAt;
+  final DateTime timestamp;
 
-  const Order({
+  Order({
     required this.id,
-    required this.documentName,
+    required this.filename,
     required this.config,
     required this.status,
-    required this.createdAt,
-  });
+    DateTime? timestamp,
+  }) : timestamp = timestamp ?? DateTime.now();
 
   Order copyWith({
     String? id,
-    String? documentName,
+    String? filename,
     PrintConfig? config,
     String? status,
-    DateTime? createdAt,
+    DateTime? timestamp,
   }) {
     return Order(
       id: id ?? this.id,
-      documentName: documentName ?? this.documentName,
+      filename: filename ?? this.filename,
       config: config ?? this.config,
       status: status ?? this.status,
-      createdAt: createdAt ?? this.createdAt,
+      timestamp: timestamp ?? this.timestamp,
     );
   }
 
   Map<String, dynamic> toJson() => {
     'id': id,
-    'document_name': documentName,
+    'filename': filename,
     'config': config.toJson(),
     'status': status,
-    'created_at': createdAt.toIso8601String(),
+    'timestamp': timestamp.toIso8601String(),
   };
 
-  factory Order.fromJson(Map<String, dynamic> json) => Order(
-    id: json['id'],
-    documentName: json['document_name'],
-    config: PrintConfig.fromJson(json['config']),
-    status: json['status'],
-    createdAt: DateTime.parse(json['created_at']),
-  );
+  factory Order.fromJson(Map<String, dynamic> json) {
+    return Order(
+      id: json['id'],
+      filename: json['filename'],
+      config: PrintConfig.fromJson(json['config']),
+      status: json['status'],
+      timestamp: DateTime.parse(json['timestamp']),
+    );
+  }
 
-  bool get isPending => status == STATUS_PENDING;
-  bool get isProcessing => status == STATUS_PROCESSING;
-  bool get isCompleted => status == STATUS_COMPLETED;
-  bool get isFailed => status == STATUS_FAILED;
+  bool get isPending => status == 'pending';
+  bool get isProcessing => status == 'processing';
+  bool get isCompleted => status == 'completed';
+  bool get isFailed => status == 'failed';
   
   double get totalCost => config.calculateCost();
 
   @override
   String toString() => 
-    'Order(id: $id, documentName: $documentName, status: $status)';
+    'Order(id: $id, filename: $filename, status: $status)';
 
   @override
   bool operator ==(Object other) =>
     identical(this, other) ||
     other is Order &&
     id == other.id &&
-    documentName == other.documentName &&
+    filename == other.filename &&
     config == other.config &&
     status == other.status &&
-    createdAt == other.createdAt;
+    timestamp == other.timestamp;
 
   @override
   int get hashCode =>
     id.hashCode ^
-    documentName.hashCode ^
+    filename.hashCode ^
     config.hashCode ^
     status.hashCode ^
-    createdAt.hashCode;
+    timestamp.hashCode;
 }

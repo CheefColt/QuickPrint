@@ -1,19 +1,37 @@
 import 'package:flutter/foundation.dart';
+import 'dart:io';
 import '../models/order.dart';
 import '../models/print_config.dart';
+import '../services/api_service.dart';
 
-class OrderProvider with ChangeNotifier {
+class OrderProvider extends ChangeNotifier {
+  final ApiService apiService;
   List<Order> _orders = [];
   bool _isLoading = false;
 
-  List<Order> get orders => List.unmodifiable(_orders);
+  OrderProvider({required this.apiService});
+
   bool get isLoading => _isLoading;
-  
+  List<Order> get orders => _orders;
+
   List<Order> get pendingOrders => 
-    _orders.where((order) => order.isPending).toList();
+    _orders.where((order) => order.status == 'pending').toList();
   
   List<Order> get completedOrders => 
-    _orders.where((order) => order.isCompleted).toList();
+    _orders.where((order) => order.status == 'completed').toList();
+
+  Stream<List<Order>> watchOrders() async* {
+    while (true) {
+      try {
+        final orders = await apiService.getOrders();
+        _orders = orders;
+        yield orders;
+      } catch (e) {
+        debugPrint('❌ Watch error: $e');
+      }
+      await Future.delayed(const Duration(seconds: 2));
+    }
+  }
 
   Future<void> addOrder(String documentPath, PrintConfig config) async {
     try {
@@ -22,44 +40,47 @@ class OrderProvider with ChangeNotifier {
 
       final order = Order(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
-        documentName: documentPath.split('\\').last,
+        filename: documentPath.split('\\').last,
         config: config,
-        status: Order.STATUS_PENDING,
-        createdAt: DateTime.now(),
+        status: 'pending',
+        timestamp: DateTime.now(),
       );
 
-      _orders.add(order);
+      await apiService.submitOrder(File(documentPath), config);
+      _orders.insert(0, order);
+      
       notifyListeners();
+    } catch (e) {
+      debugPrint('❌ Add order error: $e');
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
-  void removeOrder(String id) {
-    _orders.removeWhere((order) => order.id == id);
-    notifyListeners();
-  }
-
-  void updateOrderStatus(String id, String status) {
-    final orderIndex = _orders.indexWhere((order) => order.id == id);
-    if (orderIndex != -1) {
-      _orders[orderIndex] = _orders[orderIndex].copyWith(status: status);
+  Future<void> refreshOrders() async {
+    try {
+      _isLoading = true;
+      notifyListeners();
+      
+      _orders = await apiService.getOrders();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('❌ Refresh error: $e');
+      rethrow;
+    } finally {
+      _isLoading = false;
       notifyListeners();
     }
   }
 
-  double get totalCost => 
-    _orders.fold(0, (sum, order) => sum + order.config.calculateCost());
-
-  void clear() {
-    _orders.clear();
-    notifyListeners();
-  }
-
-  @override
-  void dispose() {
-    _orders.clear();
-    super.dispose();
+  Future<bool> submitOrder(String documentPath, PrintConfig config) async {
+    try {
+      return await apiService.submitOrder(File(documentPath), config);
+    } catch (e) {
+      debugPrint('Error submitting order: $e');
+      return false;
+    }
   }
 }

@@ -1,59 +1,82 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-import uvicorn
+import logging
+from datetime import datetime
+import json
+import uuid
 
-from app.routers import orders  # Updated import path
-from app.database import init_db
+from app.schemas.models import Order, OrderStatus, PrintConfig
+
+app = FastAPI()
+
+# Setup logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 # Create upload directory
-UPLOAD_DIR = Path("shared_folder")
+UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-app = FastAPI(title="Print Shop API")
-
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
-# Mount static files for uploaded documents
-app.mount("/files", StaticFiles(directory=str(UPLOAD_DIR)), name="files")
+@app.post("/orders", status_code=201)
+async def create_order(file: UploadFile, config: str = Form(...)):
+    try:
+        logger.info(f"Receiving order for: {file.filename}")
+        config_data = json.loads(config)
+        logger.info(f"Config: {config_data}")
+        
+        # Save file
+        file_path = UPLOAD_DIR / file.filename
+        with file_path.open("wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+            
+        # Save order metadata
+        order_data = {
+            "id": str(uuid.uuid4()),
+            "filename": file.filename,
+            "config": config_data,
+            "status": "pending",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        order_file = UPLOAD_DIR / f"{order_data['id']}.json"
+        with open(order_file, 'w') as f:
+            json.dump(order_data, f)
+            
+        logger.info(f"Order created: {order_data['id']}")
+        return {"status": "success", "order_id": order_data['id']}
+        
+    except Exception as e:
+        logger.error(f"Error creating order: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-# Include order routes
-app.include_router(orders.router)
-
-@app.on_event("startup")
-async def startup():
-    """Initialize database on startup"""
-    init_db()
-    print("Database initialized")
-
-@app.get("/")
-async def root():
-    """API root endpoint"""
-    return {
-        "status": "active",
-        "version": "1.0",
-        "docs_url": "/docs",
-        "upload_dir": str(UPLOAD_DIR)
-    }
+@app.get("/orders")
+async def get_orders():
+    try:
+        logger.debug("Fetching orders")
+        orders = []
+        for order_file in UPLOAD_DIR.glob("*.json"):
+            with open(order_file) as f:
+                order_data = json.load(f)
+                orders.append(order_data)
+        logger.debug(f"Found {len(orders)} orders")
+        return orders
+    except Exception as e:
+        logger.error(f"Error fetching orders: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"}
-
-if __name__ == "__main__":
-    uvicorn.run(
-        "main:app", 
-        host="0.0.0.0", 
-        port=8000, 
-        reload=True,
-        log_level="info"
-    )
+    return {"status": "ok"}

@@ -1,17 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 import shutil
 from pathlib import Path
 from fastapi.responses import FileResponse
+import json
+import uuid
 
 from app.database import get_db, create_order, get_order_by_id, get_all_orders, update_order_status, OrderStatus
-from app.models.order import Order, PrintConfig
+from ..schemas.print_config import PrintConfig
+from ..schemas.order import Order
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
-UPLOAD_DIR = Path("shared_folder")
+UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 @router.post("/", status_code=201)
@@ -55,15 +58,46 @@ async def create_new_order(
             detail=f"Failed to create order: {str(e)}"
         )
 
-@router.get("/", response_model=List[Order])
-async def list_all_orders(
-    limit: int = 100,
-    skip: int = 0,
-    db: Session = Depends(get_db)
+@router.post("/orders", status_code=201)
+async def create_order(
+    file: UploadFile = File(...),
+    config: dict = Form(...)
 ):
-    """List all orders with pagination"""
-    orders = get_all_orders(db, limit=limit, skip=skip)
-    return [order.to_dict() for order in orders]
+    try:
+        print_config = PrintConfig(**json.loads(config))
+        unique_filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+        file_path = UPLOAD_DIR / unique_filename
+        
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+            
+        order_data = {
+            "id": str(uuid.uuid4()),
+            "filename": unique_filename,
+            "config": print_config.dict(),
+            "status": "pending",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        json_path = file_path.with_suffix('.json')
+        with open(json_path, 'w') as f:
+            json.dump(order_data, f)
+            
+        return order_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/", response_model=List[Order])
+async def get_orders():
+    try:
+        orders = []
+        for json_file in UPLOAD_DIR.glob("*.json"):
+            with open(json_file) as f:
+                orders.append(Order(**json.load(f)))
+        return orders
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{order_id}")
 async def get_order(
@@ -191,3 +225,11 @@ async def startup_event():
     """Initialize required directories"""
     UPLOAD_DIR.mkdir(exist_ok=True)
     print(f"API Started - Upload directory: {UPLOAD_DIR}")
+
+@router.get("/orders", response_model=List[Order])
+async def get_orders():
+    orders = []
+    for json_file in UPLOAD_DIR.glob("*.json"):
+        with open(json_file) as f:
+            orders.append(Order(**json.load(f)))
+    return orders
