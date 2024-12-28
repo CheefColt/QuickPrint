@@ -1,7 +1,7 @@
 # Project Charter
 
 ## Project Name
-Printer Shop Automation System
+QuickPrint
 
 ## Project Overview
 This project aims to streamline and automate the redundant tasks performed by printer shopkeepers, improving efficiency, reducing manual effort, and enhancing customer experience. The solution involves a mobile application for customers to upload documents and manage print configurations and a desktop application for shopkeepers to handle requests, automate print settings, and collect business analytics.
